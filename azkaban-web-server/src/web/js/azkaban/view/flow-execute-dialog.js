@@ -21,11 +21,16 @@ azkaban.FlowExecuteDialogView = Backbone.View.extend({
   events: {
     "click .closeExecPanel": "hideExecutionOptionPanel",
     "click #schedule-btn": "scheduleClick",
-    "click #execute-btn": "handleExecuteFlow"
+    "click #execute-btn": "handleExecuteFlow",
+    "keyup input": "filterJobs",
+    "click li.listElement": "handleJobClick",
+    "click #close-btn2": "handleClose"
   },
 
   initialize: function (settings) {
     this.model.bind('change:flowinfo', this.changeFlowInfo, this);
+    this.model.bind('change:graph', this.render, this);
+
     $("#override-success-emails").click(function (evt) {
       if ($(this).is(':checked')) {
         $('#success-emails').attr('disabled', null);
@@ -41,9 +46,184 @@ azkaban.FlowExecuteDialogView = Backbone.View.extend({
         $('#failure-emails').attr('disabled', "disabled");
       }
     });
+
+    $("#open-joblist-btn2").click(this.handleOpen);
+    $("#joblist-panel2").hide();
+
+    this.filterInput = $(this.el).find("#filter");
+    this.list = $(this.el).find("#joblist");
+    this.listNodes = {};
   },
 
   render: function () {
+    console.log('-------- render ----------');
+    var data = this.model.attributes.data;
+    this.renderTree(this.list, data);
+  },
+
+  renderTree: function (el, data, prefix) {
+    var nodes = data.nodes;
+    if (nodes.length == 0) {
+      console.log("No results");
+      return;
+    }
+    ;
+    if (!prefix) {
+      prefix = "";
+    }
+
+    var nodeArray = nodes.slice(0);
+    nodeArray.sort(function (a, b) {
+      var diff = a.y - b.y;
+      if (diff == 0) {
+        return a.x - b.x;
+      }
+      else {
+        return diff;
+      }
+    });
+
+    var ul = document.createElement('ul');
+    $(ul).addClass("tree-list");
+    for (var i = 0; i < nodeArray.length; ++i) {
+      var li = document.createElement("li");
+      $(li).addClass("listElement");
+      $(li).addClass("tree-list-item");
+
+      // This is used for the filter step.
+      var listNodeName = prefix + nodeArray[i].id;
+      this.listNodes[listNodeName] = li;
+      li.node = nodeArray[i];
+      li.node.listElement = li;
+
+      var a = document.createElement("a");
+      var iconDiv = document.createElement('div');
+      $(iconDiv).addClass('icon');
+
+      $(a).append(iconDiv);
+
+      var span = document.createElement("span");
+      $(span).text(nodeArray[i].id);
+      $(span).addClass("jobname");
+      $(a).append(span);
+      $(li).append(a);
+      $(ul).append(li);
+
+      if (nodeArray[i].type == "flow") {
+        // Add the up down
+        var expandDiv = document.createElement("div");
+        $(expandDiv).addClass("expandarrow glyphicon glyphicon-chevron-down");
+        $(a).append(expandDiv);
+
+        if (atLeastOneChildHasChildren(nodeArray[i])) {
+          // Add the double down expand all
+          var expandAllDiv = createExpandAllButton();
+          $(a).append(expandAllDiv);
+        }
+
+        // Create subtree
+        var subul = this.renderTree(li, nodeArray[i], listNodeName + ":");
+        $(subul).hide();
+      }
+    }
+
+    $(el).append(ul);
+    return ul;
+  },
+
+  filterJobs: function (self) {
+    var filter = this.filterInput.val();
+    // Clear all filters first
+    if (!filter || filter.trim() == "") {
+      this.unfilterAll(self);
+      return;
+    }
+
+    this.hideAll(self);
+    var showList = {};
+
+    // find the jobs that need to be exposed.
+    for (var key in this.listNodes) {
+      var li = this.listNodes[key];
+      var node = li.node;
+      var nodeName = node.id;
+      node.listElement = li;
+
+      var index = nodeName.indexOf(filter);
+      if (index == -1) {
+        continue;
+      }
+
+      var spanlabel = $(li).find("> a > span");
+
+      var endIndex = index + filter.length;
+      var newHTML = nodeName.substring(0, index) + "<span class=\"filterHighlight\">" +
+          nodeName.substring(index, endIndex) + "</span>" + nodeName.substring(endIndex, nodeName.length);
+      $(spanlabel).html(newHTML);
+
+      // Apply classes to all the included embedded flows.
+      var pIndex = key.length;
+      while ((pIndex = key.lastIndexOf(":", pIndex - 1)) > 0) {
+        var parentId = key.substr(0, pIndex);
+        var parentLi = this.listNodes[parentId];
+        $(parentLi).show();
+        $(parentLi).addClass("subFilter");
+      }
+      $(li).show();
+    }
+  },
+
+  hideAll: function (self) {
+    for (var key in this.listNodes) {
+      var li = this.listNodes[key];
+      var label = $(li).find("> a > span");
+      $(label).text(li.node.id);
+      $(li).removeClass("subFilter");
+      $(li).hide();
+    }
+  },
+
+  unfilterAll: function (self) {
+    for (var key in this.listNodes) {
+      var li = this.listNodes[key];
+      var label = $(li).find("> a > span");
+      $(label).text(li.node.id);
+      $(li).removeClass("subFilter");
+      $(li).show();
+    }
+  },
+
+  handleJobClick: function (evt) {
+    console.log("Job clicked");
+    var li = $(evt.currentTarget).closest("li.listElement");
+    var node = li[0].node;
+    if (!node) {
+      return;
+    }
+
+    if (this.model.has("selected")) {
+      var selected = this.model.get("selected");
+      if (selected == node) {
+        this.model.unset("selected");
+      }
+      else {
+        this.model.set({"selected": node});
+      }
+    }
+    else {
+      this.model.set({"selected": node});
+    }
+
+    evt.stopPropagation();
+    evt.cancelBubble = true;
+  },
+
+  handleClose: function (evt) {
+    $("#joblist-panel2").fadeOut();
+  },
+
+  handleOpen: function (evt) {
+    $("#joblist-panel2").fadeIn();
   },
 
   getExecutionOptionData: function () {
